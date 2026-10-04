@@ -174,6 +174,35 @@ jobs:
             -H "Authorization: Bearer ${TOKEN}" \
             -H "X-Goog-User-Project: bluenestsoft" \
             "https://serviceusage.googleapis.com/v1/projects/bluenestsoft/services/compute.googleapis.com"
+      - name: Terraform Request Diagnostics
+        shell: bash
+        run: |
+          set +e
+
+          export TF_LOG=DEBUG
+          export TF_LOG_PATH=terraform-debug.log
+
+          terraform plan -input=false -parallelism=1 -out=tfplan
+          RESULT=$?
+
+          echo "=== REQUEST PATHS ==="
+          grep -Ei 'serviceusage|Request:|Sending request' \
+            terraform-debug.log \
+            | grep -E 'projects/|Request:' \
+            | sed -E 's/(Authorization: Bearer )[A-Za-z0-9._-]+/\1[REDACTED]/g' \
+            | head -20 || true
+
+          echo "=== FIRST ERROR CONTEXT ==="
+          grep -n -m 1 '403 Forbidden' terraform-debug.log \
+            | cut -d: -f1 \
+            | while read -r LINE; do
+                START=$((LINE > 8 ? LINE - 8 : 1))
+                sed -n "${START},${LINE}p" terraform-debug.log \
+                  | grep -Ei 'serviceusage|GET |POST |403|projects/' \
+                  | head -15
+              done || true
+
+          exit "$RESULT"
       - name: Test Terraform Credentials
         shell: bash
         run: |
