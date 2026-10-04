@@ -1,5 +1,5 @@
 
-name: AI Studio Terraform
+name: AI Studio Terraform Diagnostics
 
 on:
   workflow_dispatch:
@@ -17,9 +17,8 @@ env:
   TF_VAR_project_id: ${{ vars.GCP_PROJECT_ID }}
 
 jobs:
-
-  terraform-plan:
-    name: Terraform Plan
+  terraform-diagnostics:
+    name: Terraform Diagnostics
     runs-on: ubuntu-latest
 
     steps:
@@ -39,28 +38,16 @@ jobs:
         with:
           project_id: ${{ vars.GCP_PROJECT_ID }}
 
-      - name: Verify Terraform Credentials
+      - name: Verify Credentials
         run: |
           set -euo pipefail
 
-          if [ -z "${GOOGLE_APPLICATION_CREDENTIALS:-}" ]; then
-            echo "GOOGLE_APPLICATION_CREDENTIALS is not set"
-            exit 1
-          fi
+          test -f "$GOOGLE_APPLICATION_CREDENTIALS"
 
-          if [ ! -f "$GOOGLE_APPLICATION_CREDENTIALS" ]; then
-            echo "Google credentials file does not exist"
-            exit 1
-          fi
+          gcloud auth application-default \
+            print-access-token > /dev/null
 
-          echo "Credentials file exists"
-
-          gcloud auth application-default print-access-token \
-            > /dev/null
-
-          echo "ADC authentication successful"
-
-          gcloud auth list
+          echo "Authentication successful"
 
       - name: Test Service Usage API
         run: |
@@ -68,13 +55,22 @@ jobs:
 
           TOKEN=$(gcloud auth application-default print-access-token)
 
-          curl --fail-with-body -sS \
-            -o /dev/null \
-            -w 'Service Usage API HTTP Status: %{http_code}\n' \
-            -H "Authorization: Bearer ${TOKEN}" \
-            "https://serviceusage.googleapis.com/v1/projects/65257539851/services/compute.googleapis.com"
+          for API in \
+            compute.googleapis.com \
+            container.googleapis.com \
+            artifactregistry.googleapis.com \
+            aiplatform.googleapis.com \
+            iam.googleapis.com \
+            iamcredentials.googleapis.com
+          do
+            echo "Testing $API"
 
-          echo "Service Usage API test successful"
+            curl -sS \
+              -o /dev/null \
+              -w "HTTP Status: %{http_code}\n" \
+              -H "Authorization: Bearer ${TOKEN}" \
+              "https://serviceusage.googleapis.com/v1/projects/65257539851/services/${API}"
+          done
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
@@ -94,64 +90,81 @@ jobs:
       - name: Terraform Validate
         run: terraform validate
 
-      - name: Terraform Plan
+      - name: List Terraform State
         run: |
-          terraform plan \
-            -input=false \
-            -out=tfplan
+          echo "=== Resources in Terraform State ==="
+          terraform state list
 
-          terraform show -no-color tfplan > plan.txt
+      - name: Inspect API State
+        run: |
+          echo "=== Compute API ==="
 
-      - name: Upload Terraform Plan
+          terraform state show \
+            'google_project_service.required["compute.googleapis.com"]'
+
+          echo "=== Kubernetes API ==="
+
+          terraform state show \
+            'google_project_service.required["container.googleapis.com"]'
+
+          echo "=== Artifact Registry API ==="
+
+          terraform state show \
+            'google_project_service.required["artifactregistry.googleapis.com"]'
+
+          echo "=== Vertex AI API ==="
+
+          terraform state show \
+            'google_project_service.required["aiplatform.googleapis.com"]'
+
+          echo "=== IAM API ==="
+
+          terraform state show \
+            'google_project_service.required["iam.googleapis.com"]'
+
+          echo "=== IAM Credentials API ==="
+
+          terraform state show \
+            'google_project_service.required["iamcredentials.googleapis.com"]'
+
+      - name: Inspect Terraform Providers
+        run: terraform providers
+
+      - name: Backup Terraform State
+        run: |
+          terraform state pull > terraform-state-backup.json
+
+          echo "Terraform state backup created"
+
+      - name: Upload State Backup
         uses: actions/upload-artifact@v4
         with:
-          name: terraform-plan
-          path: |
-            tfplan
-            plan.txt
+          name: terraform-state-backup
+          path: terraform-state-backup.json
           retention-days: 1
           if-no-files-found: error
 
-  terraform-apply:
-    name: Terraform Apply
-    needs: terraform-plan
-    runs-on: ubuntu-latest
-
-    environment:
-      name: production
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Authenticate to Google Cloud
-        uses: google-github-actions/auth@v2
-        with:
-          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
-          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
-          create_credentials_file: true
-          export_environment_variables: true
-
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_version: "1.10.5"
-          terraform_wrapper: false
-
-      - name: Terraform Init
+      - name: Diagnostic Terraform Plan
         run: |
-          terraform init -input=false \
-            -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}" \
-            -backend-config="prefix=ai-studio/gke"
+          terraform plan \
+            -refresh=false \
+            -input=false \
+            -out=diagnostic.tfplan
 
-      - name: Download Terraform Plan
-        uses: actions/download-artifact@v4
+          terraform show \
+            -no-color diagnostic.tfplan \
+            > diagnostic-plan.txt
+
+      - name: Upload Diagnostic Plan
+        uses: actions/upload-artifact@v4
         with:
-          name: terraform-plan
-          path: .
+          name: terraform-diagnostic-plan
+          path: diagnostic-plan.txt
+          retention-days: 1
+          if-no-files-found: error
 
-      - name: Terraform Apply
-        run: terraform apply -input=false tfplan
-
-      - name: Show Terraform Outputs
-        run: terraform output
+      - name: Diagnostics Complete
+        run: |
+          echo "Diagnostics completed."
+          echo "No infrastructure changes have been applied."
+          echo "Do not apply a plan generated with refresh disabled."
