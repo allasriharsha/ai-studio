@@ -23,7 +23,6 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-
       - name: Checkout
         uses: actions/checkout@v4
 
@@ -32,14 +31,51 @@ jobs:
         with:
           workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
           service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+          create_credentials_file: true
+          export_environment_variables: true
+
+      - name: Setup Google Cloud SDK
+        uses: google-github-actions/setup-gcloud@v3
+        with:
+          project_id: ${{ vars.GCP_PROJECT_ID }}
+
       - name: Verify Terraform Credentials
         run: |
-          echo "Credentials file: $GOOGLE_APPLICATION_CREDENTIALS"
-      
+          set -euo pipefail
+
+          if [ -z "${GOOGLE_APPLICATION_CREDENTIALS:-}" ]; then
+            echo "GOOGLE_APPLICATION_CREDENTIALS is not set"
+            exit 1
+          fi
+
+          if [ ! -f "$GOOGLE_APPLICATION_CREDENTIALS" ]; then
+            echo "Google credentials file does not exist"
+            exit 1
+          fi
+
+          echo "Credentials file exists"
+
           gcloud auth application-default print-access-token \
-            > /dev/null && echo "ADC authentication successful"
+            > /dev/null
+
+          echo "ADC authentication successful"
 
           gcloud auth list
+
+      - name: Test Service Usage API
+        run: |
+          set -euo pipefail
+
+          TOKEN=$(gcloud auth application-default print-access-token)
+
+          curl --fail-with-body -sS \
+            -o /dev/null \
+            -w 'Service Usage API HTTP Status: %{http_code}\n' \
+            -H "Authorization: Bearer ${TOKEN}" \
+            "https://serviceusage.googleapis.com/v1/projects/65257539851/services/compute.googleapis.com"
+
+          echo "Service Usage API test successful"
+
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
@@ -85,7 +121,6 @@ jobs:
       name: production
 
     steps:
-
       - name: Checkout
         uses: actions/checkout@v4
 
@@ -94,6 +129,8 @@ jobs:
         with:
           workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
           service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+          create_credentials_file: true
+          export_environment_variables: true
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
