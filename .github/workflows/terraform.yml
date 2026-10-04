@@ -17,7 +17,22 @@ env:
   TF_VAR_project_id: ${{ vars.GCP_PROJECT_ID }}
 
 jobs:
-
+  - name: Diagnose Service Usage API
+    shell: bash
+    run: |
+      set -euo pipefail
+  
+      TOKEN=$(gcloud auth application-default print-access-token)
+  
+      for VERSION in v1 v1beta1; do
+        echo "Testing $VERSION"
+  
+        curl -sS \
+          -o /dev/null \
+          -w "HTTP Status: %{http_code}\n" \
+          -H "Authorization: Bearer ${TOKEN}" \
+          "https://serviceusage.googleapis.com/${VERSION}/projects/65257539851/services/compute.googleapis.com"
+      done
   terraform-plan:
     name: Terraform Plan
     runs-on: ubuntu-latest
