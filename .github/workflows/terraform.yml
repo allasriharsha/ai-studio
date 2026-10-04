@@ -107,6 +107,13 @@ jobs:
           terraform init -input=false \
             -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}" \
             -backend-config="prefix=ai-studio/gke"
+      - name: Clear Tainted Project Services
+        run: |
+          terraform untaint 'google_project_service.required["://googleapis.com"]' || true
+          terraform untaint 'google_project_service.required["://googleapis.com"]' || true
+          terraform untaint 'google_project_service.required["://googleapis.com"]' || true
+          terraform untaint 'google_project_service.required["://googleapis.com"]' || true
+
 
       - name: Terraform Validate
         run: terraform validate
