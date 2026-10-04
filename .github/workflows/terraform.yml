@@ -107,12 +107,8 @@ jobs:
           terraform init -input=false \
             -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}" \
             -backend-config="prefix=ai-studio/gke"
-      - name: Clear Tainted Project Services
-        run: |
-          terraform untaint 'google_project_service.required["://googleapis.com"]' || true
-          terraform untaint 'google_project_service.required["://googleapis.com"]' || true
-          terraform untaint 'google_project_service.required["://googleapis.com"]' || true
-          terraform untaint 'google_project_service.required["://googleapis.com"]' || true
+
+
 
 
       - name: Terraform Validate
@@ -166,6 +162,14 @@ jobs:
           path: terraform-state-backup.json
           retention-days: 1
           if-no-files-found: error
+      - name: Terraform Plan-clear
+        run: |
+          terraform plan -input=false -parallelism=1 \
+            -replace='google_project_service.required["compute.googleapis.com"]' \
+            -replace='google_project_service.required["container.googleapis.com"]' \
+            -replace='google_project_service.required["artifactregistry.googleapis.com"]' \
+            -replace='google_project_service.required["aiplatform.googleapis.com"]' \
+            -out=tfplan
       - name: 'Check Active GCP Identity'
         run: |
           gcloud auth list
