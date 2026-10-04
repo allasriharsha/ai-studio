@@ -178,7 +178,9 @@ jobs:
         shell: bash
         run: |
           set +e
+          export GOOGLE_CREDENTIALS="$(cat "$GOOGLE_APPLICATION_CREDENTIALS")"
 
+          terraform plan -input=false -out=tfplan
           export TF_LOG=TRACE
           export TF_LOG_PATH=terraform-debug.log
 
