@@ -174,15 +174,28 @@ jobs:
             -H "Authorization: Bearer ${TOKEN}" \
             -H "X-Goog-User-Project: bluenestsoft" \
             "https://serviceusage.googleapis.com/v1/projects/bluenestsoft/services/compute.googleapis.com"
-      - name: Terraform Plan Diagnostics
+      - name: Terraform Plan Diagnostics-pre
         shell: bash
         run: |
-          set -euo pipefail
+          set +e
 
           export TF_LOG=TRACE
           export TF_LOG_PATH=terraform-debug.log
 
           terraform plan -input=false -out=tfplan
+          RESULT=$?
+
+          echo "=== HTTP REQUEST URLS ==="
+          grep -Ei 'GET https://serviceusage.googleapis.com' \
+            terraform-debug.log \
+            | sort -u || true
+
+          echo "=== HTTP ERRORS ==="
+          grep -Ei '403 Forbidden' \
+            terraform-debug.log \
+            | head -10 || true
+
+          exit "$RESULT"
 
       - name: Terraform Plan Diagnostics
         shell: bash
