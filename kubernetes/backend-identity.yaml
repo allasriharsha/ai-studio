@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ai-studio
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: backend
+  namespace: ai-studio
+  annotations:
+    iam.gke.io/gcp-service-account: REPLACE_BACKEND_SERVICE_ACCOUNT_EMAIL
