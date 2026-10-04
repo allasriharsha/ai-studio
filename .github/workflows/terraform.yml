@@ -1,5 +1,5 @@
 
-name: AI Studio Terraform Diagnostics
+name: AI Studio Terraform
 
 on:
   workflow_dispatch:
@@ -17,11 +17,13 @@ env:
   TF_VAR_project_id: ${{ vars.GCP_PROJECT_ID }}
 
 jobs:
-  terraform-diagnostics:
-    name: Terraform Diagnostics
+
+  terraform-plan:
+    name: Terraform Plan
     runs-on: ubuntu-latest
 
     steps:
+
       - name: Checkout
         uses: actions/checkout@v4
 
@@ -38,7 +40,8 @@ jobs:
         with:
           project_id: ${{ vars.GCP_PROJECT_ID }}
 
-      - name: Verify Credentials
+      - name: Verify Google Cloud Credentials
+        shell: bash
         run: |
           set -euo pipefail
 
@@ -47,9 +50,10 @@ jobs:
           gcloud auth application-default \
             print-access-token > /dev/null
 
-          echo "Authentication successful"
+          echo "Google Cloud authentication successful"
 
       - name: Test Service Usage API
+        shell: bash
         run: |
           set -euo pipefail
 
@@ -65,7 +69,7 @@ jobs:
           do
             echo "Testing $API"
 
-            curl -sS \
+            curl --fail-with-body -sS \
               -o /dev/null \
               -w "HTTP Status: %{http_code}\n" \
               -H "Authorization: Bearer ${TOKEN}" \
@@ -90,53 +94,16 @@ jobs:
       - name: Terraform Validate
         run: terraform validate
 
-      - name: List Terraform State
-        run: |
-          echo "=== Resources in Terraform State ==="
-          terraform state list
-
-      - name: Inspect API State
-        run: |
-          echo "=== Compute API ==="
-
-          terraform state show \
-            'google_project_service.required["compute.googleapis.com"]'
-
-          echo "=== Kubernetes API ==="
-
-          terraform state show \
-            'google_project_service.required["container.googleapis.com"]'
-
-          echo "=== Artifact Registry API ==="
-
-          terraform state show \
-            'google_project_service.required["artifactregistry.googleapis.com"]'
-
-          echo "=== Vertex AI API ==="
-
-          terraform state show \
-            'google_project_service.required["aiplatform.googleapis.com"]'
-
-          echo "=== IAM API ==="
-
-          terraform state show \
-            'google_project_service.required["iam.googleapis.com"]'
-
-          echo "=== IAM Credentials API ==="
-
-          terraform state show \
-            'google_project_service.required["iamcredentials.googleapis.com"]'
-
-      - name: Inspect Terraform Providers
-        run: terraform providers
-
       - name: Backup Terraform State
+        shell: bash
         run: |
+          set -euo pipefail
+
           terraform state pull > terraform-state-backup.json
 
           echo "Terraform state backup created"
 
-      - name: Upload State Backup
+      - name: Upload Terraform State Backup
         uses: actions/upload-artifact@v4
         with:
           name: terraform-state-backup
@@ -144,27 +111,109 @@ jobs:
           retention-days: 1
           if-no-files-found: error
 
-      - name: Diagnostic Terraform Plan
+      - name: Inspect Terraform State
         run: |
+          echo "=== Terraform State ==="
+          terraform state list
+
+          echo "=== Terraform Providers ==="
+          terraform providers
+
+      - name: Repair Tainted API Resources
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          APIS=(
+            "aiplatform.googleapis.com"
+            "artifactregistry.googleapis.com"
+            "compute.googleapis.com"
+            "container.googleapis.com"
+          )
+
+          for API in "${APIS[@]}"; do
+
+            RESOURCE="google_project_service.required[\"${API}\"]"
+
+            echo "Checking $RESOURCE"
+
+            if terraform state show "$RESOURCE" | grep -q '# tainted'; then
+
+              echo "Repairing tainted resource: $RESOURCE"
+
+              terraform untaint "$RESOURCE"
+
+            else
+
+              echo "Resource is not tainted: $RESOURCE"
+
+            fi
+
+          done
+
+      - name: Terraform Plan
+        shell: bash
+        run: |
+          set -euo pipefail
+
           terraform plan \
-            -refresh=false \
             -input=false \
-            -out=diagnostic.tfplan
+            -out=tfplan
 
           terraform show \
-            -no-color diagnostic.tfplan \
-            > diagnostic-plan.txt
+            -no-color tfplan > plan.txt
 
-      - name: Upload Diagnostic Plan
+      - name: Upload Terraform Plan
         uses: actions/upload-artifact@v4
         with:
-          name: terraform-diagnostic-plan
-          path: diagnostic-plan.txt
+          name: terraform-plan
+          path: |
+            tfplan
+            plan.txt
           retention-days: 1
           if-no-files-found: error
 
-      - name: Diagnostics Complete
+  terraform-apply:
+    name: Terraform Apply
+    needs: terraform-plan
+    runs-on: ubuntu-latest
+
+    environment:
+      name: production
+
+    steps:
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+          create_credentials_file: true
+          export_environment_variables: true
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.10.5"
+          terraform_wrapper: false
+
+      - name: Terraform Init
         run: |
-          echo "Diagnostics completed."
-          echo "No infrastructure changes have been applied."
-          echo "Do not apply a plan generated with refresh disabled."
+          terraform init -input=false \
+            -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}" \
+            -backend-config="prefix=ai-studio/gke"
+
+      - name: Download Terraform Plan
+        uses: actions/download-artifact@v4
+        with:
+          name: terraform-plan
+          path: .
+
+      - name: Terraform Apply
+        run: terraform apply -input=false tfplan
+
+      - name: Show Terraform Outputs
+        run: terraform output
