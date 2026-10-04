@@ -32,7 +32,14 @@ jobs:
         with:
           workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
           service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+      - name: Verify Terraform Credentials
+        run: |
+          echo "Credentials file: $GOOGLE_APPLICATION_CREDENTIALS"
+      
+          gcloud auth application-default print-access-token \
+            > /dev/null && echo "ADC authentication successful"
 
+          gcloud auth list
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
