@@ -184,6 +184,21 @@ jobs:
           }
 
           terraform show -no-color tfplan > plan.txt
+      - name: Check Quota Project Permissions
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          TOKEN=$(gcloud auth application-default print-access-token)
+
+          echo "Testing Service Usage API with explicit quota project"
+
+          curl -sS \
+            -o /dev/null \
+            -w 'HTTP Status: %{http_code}\n' \
+            -H "Authorization: Bearer ${TOKEN}" \
+            -H "X-Goog-User-Project: bluenestsoft" \
+            "https://serviceusage.googleapis.com/v1/projects/bluenestsoft/services/compute.googleapis.com"
 
       - name: Upload Terraform Plan
         uses: actions/upload-artifact@v4
