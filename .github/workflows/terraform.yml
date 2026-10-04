@@ -194,9 +194,10 @@ jobs:
           PY
 
           echo "=== Service Usage access ==="
-          gcloud services describe compute.googleapis.com \
+          gcloud services list \
+            --enabled \
             --project=bluenestsoft \
-            --format="value(state)"
+            --filter="config.name=compute.googleapis.com"
       - name: Terraform Plan Diagnostics-pre
         shell: bash
         run: |
