@@ -17,28 +17,11 @@ env:
   TF_VAR_project_id: ${{ vars.GCP_PROJECT_ID }}
 
 jobs:
-  - name: Diagnose Service Usage API
-    shell: bash
-    run: |
-      set -euo pipefail
-  
-      TOKEN=$(gcloud auth application-default print-access-token)
-  
-      for VERSION in v1 v1beta1; do
-        echo "Testing $VERSION"
-  
-        curl -sS \
-          -o /dev/null \
-          -w "HTTP Status: %{http_code}\n" \
-          -H "Authorization: Bearer ${TOKEN}" \
-          "https://serviceusage.googleapis.com/${VERSION}/projects/65257539851/services/compute.googleapis.com"
-      done
   terraform-plan:
-    name: Terraform Plan
+    name: Terraform Diagnostics and Plan
     runs-on: ubuntu-latest
 
     steps:
-
       - name: Checkout
         uses: actions/checkout@v4
 
@@ -66,29 +49,48 @@ jobs:
             print-access-token > /dev/null
 
           echo "Google Cloud authentication successful"
+          echo "Project: $TF_VAR_project_id"
 
-      - name: Test Service Usage API
+      - name: Diagnose Service Usage API
         shell: bash
         run: |
           set -euo pipefail
 
           TOKEN=$(gcloud auth application-default print-access-token)
 
-          for API in \
-            compute.googleapis.com \
-            container.googleapis.com \
-            artifactregistry.googleapis.com \
-            aiplatform.googleapis.com \
-            iam.googleapis.com \
+          APIS=(
+            compute.googleapis.com
+            container.googleapis.com
+            artifactregistry.googleapis.com
+            aiplatform.googleapis.com
+            iam.googleapis.com
             iamcredentials.googleapis.com
-          do
-            echo "Testing $API"
+          )
 
-            curl --fail-with-body -sS \
-              -o /dev/null \
-              -w "HTTP Status: %{http_code}\n" \
-              -H "Authorization: Bearer ${TOKEN}" \
-              "https://serviceusage.googleapis.com/v1/projects/65257539851/services/${API}"
+          PROJECTS=(
+            "${{ vars.GCP_PROJECT_ID }}"
+            "65257539851"
+          )
+
+          for PROJECT in "${PROJECTS[@]}"; do
+            for VERSION in v1 v1beta1; do
+              for API in "${APIS[@]}"; do
+
+                echo "--------------------------------"
+                echo "Project: $PROJECT"
+                echo "API version: $VERSION"
+                echo "Service: $API"
+
+                HTTP_CODE=$(curl -sS \
+                  -o /dev/null \
+                  -w '%{http_code}' \
+                  -H "Authorization: Bearer ${TOKEN}" \
+                  "https://serviceusage.googleapis.com/${VERSION}/projects/${PROJECT}/services/${API}")
+
+                echo "HTTP Status: $HTTP_CODE"
+
+              done
+            done
           done
 
       - name: Setup Terraform
@@ -109,6 +111,38 @@ jobs:
       - name: Terraform Validate
         run: terraform validate
 
+      - name: Inspect Terraform State
+        shell: bash
+        run: |
+          echo "=== Terraform Resources ==="
+          terraform state list
+
+          echo "=== Terraform Providers ==="
+          terraform providers
+
+      - name: Inspect API Resource State
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          for API in \
+            compute.googleapis.com \
+            container.googleapis.com \
+            artifactregistry.googleapis.com \
+            aiplatform.googleapis.com \
+            iam.googleapis.com \
+            iamcredentials.googleapis.com
+          do
+
+            RESOURCE="google_project_service.required[\"${API}\"]"
+
+            echo "================================"
+            echo "Resource: $RESOURCE"
+
+            terraform state show "$RESOURCE"
+
+          done
+
       - name: Backup Terraform State
         shell: bash
         run: |
@@ -125,46 +159,6 @@ jobs:
           path: terraform-state-backup.json
           retention-days: 1
           if-no-files-found: error
-
-      - name: Inspect Terraform State
-        run: |
-          echo "=== Terraform State ==="
-          terraform state list
-
-          echo "=== Terraform Providers ==="
-          terraform providers
-
-      - name: Repair Tainted API Resources
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          APIS=(
-            "aiplatform.googleapis.com"
-            "artifactregistry.googleapis.com"
-            "compute.googleapis.com"
-            "container.googleapis.com"
-          )
-
-          for API in "${APIS[@]}"; do
-
-            RESOURCE="google_project_service.required[\"${API}\"]"
-
-            echo "Checking $RESOURCE"
-
-            if terraform state show "$RESOURCE" | grep -q '# tainted'; then
-
-              echo "Repairing tainted resource: $RESOURCE"
-
-              terraform untaint "$RESOURCE"
-
-            else
-
-              echo "Resource is not tainted: $RESOURCE"
-
-            fi
-
-          done
 
       - name: Terraform Plan
         shell: bash
@@ -187,48 +181,3 @@ jobs:
             plan.txt
           retention-days: 1
           if-no-files-found: error
-
-  terraform-apply:
-    name: Terraform Apply
-    needs: terraform-plan
-    runs-on: ubuntu-latest
-
-    environment:
-      name: production
-
-    steps:
-
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Authenticate to Google Cloud
-        uses: google-github-actions/auth@v2
-        with:
-          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
-          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
-          create_credentials_file: true
-          export_environment_variables: true
-
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_version: "1.10.5"
-          terraform_wrapper: false
-
-      - name: Terraform Init
-        run: |
-          terraform init -input=false \
-            -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}" \
-            -backend-config="prefix=ai-studio/gke"
-
-      - name: Download Terraform Plan
-        uses: actions/download-artifact@v4
-        with:
-          name: terraform-plan
-          path: .
-
-      - name: Terraform Apply
-        run: terraform apply -input=false tfplan
-
-      - name: Show Terraform Outputs
-        run: terraform output
