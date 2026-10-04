@@ -174,6 +174,29 @@ jobs:
             -H "Authorization: Bearer ${TOKEN}" \
             -H "X-Goog-User-Project: bluenestsoft" \
             "https://serviceusage.googleapis.com/v1/projects/bluenestsoft/services/compute.googleapis.com"
+      - name: Test Terraform Credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "=== Credential configuration ==="
+          python3 - <<'PY'
+          import json, os
+
+          path = os.environ["GOOGLE_APPLICATION_CREDENTIALS"]
+
+          with open(path) as f:
+              creds = json.load(f)
+
+          print("Credential type:", creds.get("type"))
+          print("Impersonated service account:",
+                creds.get("service_account_impersonation_url"))
+          PY
+
+          echo "=== Service Usage access ==="
+          gcloud services describe compute.googleapis.com \
+            --project=bluenestsoft \
+            --format="value(state)"
       - name: Terraform Plan Diagnostics-pre
         shell: bash
         run: |
