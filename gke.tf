@@ -26,6 +26,8 @@ resource "google_container_node_pool" "cpu" {
     workload_metadata_config { mode = "GKE_METADATA" }
     metadata = { disable-legacy-endpoints = "true" }
   }
-  management { auto_repair = true; auto_upgrade = true }
+  management { auto_repair = true
+               auto_upgrade = true 
+}
   depends_on = [google_project_iam_member.node_roles]
 }
