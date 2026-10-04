@@ -160,17 +160,30 @@ jobs:
           retention-days: 1
           if-no-files-found: error
 
-      - name: Terraform Plan
+      - name: Terraform Plan Diagnostics
         shell: bash
         run: |
           set -euo pipefail
 
-          terraform plan \
-            -input=false \
-            -out=tfplan
+          export TF_LOG=DEBUG
+          export TF_LOG_PATH=terraform-debug.log
 
-          terraform show \
-            -no-color tfplan > plan.txt
+          terraform plan -input=false -out=tfplan || {
+            echo "Terraform Plan failed."
+
+            echo "=== Service Usage API errors ==="
+
+            grep -Ei \
+              '403|serviceusage.googleapis.com|permission denied' \
+              terraform-debug.log \
+              | sed -E \
+                's/(Authorization: Bearer )[A-Za-z0-9._-]+/\1[REDACTED]/g' \
+              | head -40 || true
+
+            exit 1
+          }
+
+          terraform show -no-color tfplan > plan.txt
 
       - name: Upload Terraform Plan
         uses: actions/upload-artifact@v4
