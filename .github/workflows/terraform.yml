@@ -159,6 +159,12 @@ jobs:
           path: terraform-state-backup.json
           retention-days: 1
           if-no-files-found: error
+      - name: 'Check Active GCP Identity'
+        run: |
+          gcloud auth list
+          gcloud config get-value account
+          curl -s -H "Authorization: Bearer $(gcloud auth print-access-token)" \
+            https://googleapis.com || true
       - name: Check Quota Project Permissions
         shell: bash
         run: |
@@ -227,12 +233,7 @@ jobs:
             --enabled \
             --project=bluenestsoft \
             --filter="config.name=compute.googleapis.com"
-      - name: 'Check Active GCP Identity'
-        run: |
-          gcloud auth list
-          gcloud config get-value account
-          curl -s -H "Authorization: Bearer $(gcloud auth print-access-token)" \
-            https://googleapis.com || true
+
       - name: Terraform Plan Diagnostics-pre
         shell: bash
         run: |
